@@ -1,0 +1,10 @@
+*.zip
+*.idea
+logs/*
+*__pycache__*
+src/*
+taming/*
+outputs/*
+models/*
+data/*
+*.egg-info/
