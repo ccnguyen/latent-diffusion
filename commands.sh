@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0 python main.py --base configs/autoencoder/autoencoder_kl_8x8x64.yaml -t --gpus 0,
