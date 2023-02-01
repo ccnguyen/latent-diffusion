@@ -79,6 +79,8 @@ class LOLBase(Dataset):
         if vflip < self.flip_p:
             img = np.flip(img, axis=1)
 
+        # example["image"] = (img[:, :, 0:3] / 255.0).astype(np.float32)
+        # example["LR_image"] = (img[:, :, 3:6] / 255.0).astype(np.float32)
         example["image"] = (img[:, :, 0:3] / 127.5 - 1.0).astype(np.float32)
         example["LR_image"] = (img[:, :, 3:6] / 127.5 - 1.0).astype(np.float32)
         return example

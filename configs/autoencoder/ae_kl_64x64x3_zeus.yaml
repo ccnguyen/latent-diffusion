@@ -27,18 +27,18 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 1
+    batch_size: 8
     wrap: True
     train:
       target: ldm.data.LOL.LOLTrain
       params:
         data_root: /data/cindy/LOL/our485
-        size: 32
+        size: 256
     validation:
       target: ldm.data.LOL.LOLValidation
       params:
         data_root: /data/cindy/LOL/eval15
-        size: 32
+        size: 256
 
 lightning:
   callbacks:

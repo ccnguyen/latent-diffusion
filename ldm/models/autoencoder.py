@@ -349,34 +349,53 @@ class AutoencoderKL(pl.LightningModule):
         return x
 
     def training_step(self, batch, batch_idx, optimizer_idx):
-        inputs = self.get_input(batch, self.image_key)
+
+        # inputs = self.get_input(batch, self.image_key)
+        # reconstructions, posterior = self(inputs)
+
+        inputs = self.get_input(batch, 'LR_image')
+        gts = self.get_input(batch, 'image')
         reconstructions, posterior = self(inputs)
 
         if optimizer_idx == 0:
             # train encoder+decoder+logvar
-            aeloss, log_dict_ae = self.loss(inputs, reconstructions, posterior, optimizer_idx, self.global_step,
+            aeloss, log_dict_ae = self.loss(gts, reconstructions, posterior, optimizer_idx, self.global_step,
                                             last_layer=self.get_last_layer(), split="train")
+            # aeloss, log_dict_ae = self.loss(inputs, reconstructions, posterior, optimizer_idx, self.global_step,
+            #                                 last_layer=self.get_last_layer(), split="train")
             self.log("aeloss", aeloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_ae, prog_bar=False, logger=True, on_step=True, on_epoch=False)
             return aeloss
 
         if optimizer_idx == 1:
             # train the discriminator
-            discloss, log_dict_disc = self.loss(inputs, reconstructions, posterior, optimizer_idx, self.global_step,
+            discloss, log_dict_disc = self.loss(gts, reconstructions, posterior, optimizer_idx, self.global_step,
                                                 last_layer=self.get_last_layer(), split="train")
+            # discloss, log_dict_disc = self.loss(inputs, reconstructions, posterior, optimizer_idx, self.global_step,
+            #                                     last_layer=self.get_last_layer(), split="train")
 
             self.log("discloss", discloss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=False)
             return discloss
 
     def validation_step(self, batch, batch_idx):
-        inputs = self.get_input(batch, self.image_key)
+        inputs = self.get_input(batch, 'LR_image')
+        gts = self.get_input(batch, 'image')
+
+        # inputs = self.get_input(batch, self.image_key)
         reconstructions, posterior = self(inputs)
-        aeloss, log_dict_ae = self.loss(inputs, reconstructions, posterior, 0, self.global_step,
+
+        aeloss, log_dict_ae = self.loss(gts, reconstructions, posterior, 0, self.global_step,
                                         last_layer=self.get_last_layer(), split="val")
 
-        discloss, log_dict_disc = self.loss(inputs, reconstructions, posterior, 1, self.global_step,
+        discloss, log_dict_disc = self.loss(gts, reconstructions, posterior, 1, self.global_step,
                                             last_layer=self.get_last_layer(), split="val")
+
+        # aeloss, log_dict_ae = self.loss(inputs, reconstructions, posterior, 0, self.global_step,
+        #                                 last_layer=self.get_last_layer(), split="val")
+        #
+        # discloss, log_dict_disc = self.loss(inputs, reconstructions, posterior, 1, self.global_step,
+        #                                     last_layer=self.get_last_layer(), split="val")
 
         self.log("val/rec_loss", log_dict_ae["val/rec_loss"])
         self.log_dict(log_dict_ae)
@@ -400,7 +419,9 @@ class AutoencoderKL(pl.LightningModule):
     @torch.no_grad()
     def log_images(self, batch, only_inputs=False, **kwargs):
         log = dict()
-        x = self.get_input(batch, self.image_key)
+        # x = self.get_input(batch, self.image_key)
+        x = self.get_input(batch, 'LR_image')
+
         x = x.to(self.device)
         if not only_inputs:
             xrec, posterior = self(x)
