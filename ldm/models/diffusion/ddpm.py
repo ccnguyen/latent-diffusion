@@ -8,8 +8,11 @@ https://github.com/CompVis/taming-transformers
 
 import torch
 import torch.nn as nn
+import lpips
 import matplotlib.pyplot as plt
 import skimage.io
+from skimage.metrics import structural_similarity as ssim
+
 import numpy as np
 import pytorch_lightning as pl
 from torch.optim.lr_scheduler import LambdaLR
@@ -367,12 +370,23 @@ class DDPM(pl.LightningModule):
 
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):
-        _, loss_dict_no_ema = self.inference_step(batch)
-        with self.ema_scope():
-            _, loss_dict_ema = self.inference_step(batch)
-            loss_dict_ema = {key + '_ema': loss_dict_ema[key] for key in loss_dict_ema}
-        self.log_dict(loss_dict_no_ema, prog_bar=False, logger=True, on_step=False, on_epoch=True)
-        self.log_dict(loss_dict_ema, prog_bar=False, logger=True, on_step=False, on_epoch=True)
+        result_dict = self.inference_step(batch)
+        self.log_dict(result_dict, prog_bar=False, logger=True, on_step=False, on_epoch=True)
+
+    def get_psnr(self, pred, gt):
+        return 10 * torch.log10(1 / torch.mean((pred - gt) ** 2)).detach().cpu().numpy()
+
+    def get_ssim(self, pred, gt):
+        ssims = []
+        for i in range(pred.shape[0]):
+            pred_i = pred[i, :, :, :].permute(1, 2, 0).detach().cpu().numpy()
+            gt_i = gt[i, :, :, :].permute(1, 2, 0).detach().cpu().numpy()
+            # set weights to more closely match MatLab implementation by Wang et al.
+            ssims.append(ssim(pred_i, gt_i, channel_axis=2, data_range=1.0,
+                              gaussian_weights=True, use_sample_covariance=False,
+                              K1=0.01, K2=0.03, sigma=1.5))
+
+        return sum(ssims) / len(ssims)
 
 
     def on_train_batch_end(self, *args, **kwargs):
@@ -1048,35 +1062,37 @@ class LatentDiffusion(DDPM):
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         model_output = self.apply_model(x_noisy, t, cond)
 
-        loss_dict = {}
+        results_dict = {}
         prefix = 'train' if self.training else 'val'
+        target = x_start
+        lpips_fn = lpips.LPIPS(net='alex').to('cuda:0').eval()
+        results_dict['lpips'] = lpips_fn(model_output, target)
 
-        if self.parameterization == "x0":
-            target = x_start
-        elif self.parameterization == "eps":
-            target = noise
-        else:
-            raise NotImplementedError()
+        out = model_output * 0.5 + 1.0
+        gt = target * 0.5 + 1.0
+        results_dict['psnr'] = self.get_psnr(out, gt)
+        results_dict['ssim'] = self.get_ssim(out, gt)
+        return results_dict
 
-        loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
-        loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
-
-        logvar_t = self.logvar.to(self.device)[t]
-
-        loss = loss_simple / torch.exp(logvar_t) + logvar_t
-        if self.learn_logvar:
-            loss_dict.update({f'{prefix}/loss_gamma': loss.mean()})
-            loss_dict.update({'logvar': self.logvar.data.mean()})
-
-        loss = self.l_simple_weight * loss.mean()
-
-        loss_vlb = self.get_loss(model_output, target, mean=False).mean(dim=(1, 2, 3))
-        loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
-        loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
-        loss += (self.original_elbo_weight * loss_vlb)
-        loss_dict.update({f'{prefix}/loss': loss})
-
-        return loss, loss_dict
+        # loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
+        # loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
+        #
+        # logvar_t = self.logvar.to(self.device)[t]
+        #
+        # loss = loss_simple / torch.exp(logvar_t) + logvar_t
+        # if self.learn_logvar:
+        #     loss_dict.update({f'{prefix}/loss_gamma': loss.mean()})
+        #     loss_dict.update({'logvar': self.logvar.data.mean()})
+        #
+        # loss = self.l_simple_weight * loss.mean()
+        #
+        # loss_vlb = self.get_loss(model_output, target, mean=False).mean(dim=(1, 2, 3))
+        # loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
+        # loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
+        # loss += (self.original_elbo_weight * loss_vlb)
+        # loss_dict.update({f'{prefix}/loss': loss})
+        #
+        # return loss, loss_dict
 
     def p_losses(self, x_start, cond, t, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))

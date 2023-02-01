@@ -2,6 +2,8 @@ import torch
 import pytorch_lightning as pl
 import torch.nn.functional as F
 from contextlib import contextmanager
+from skimage.metrics import structural_similarity as ssim
+
 
 from taming.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 
@@ -161,11 +163,11 @@ class VQModel(pl.LightningModule):
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=True)
             return discloss
 
-    def validation_step(self, batch, batch_idx):
-        log_dict = self._validation_step(batch, batch_idx)
-        with self.ema_scope():
-            log_dict_ema = self._validation_step(batch, batch_idx, suffix="_ema")
-        return log_dict
+    # def validation_step(self, batch, batch_idx):
+    #     log_dict = self._validation_step(batch, batch_idx)
+    #     with self.ema_scope():
+    #         log_dict_ema = self._validation_step(batch, batch_idx, suffix="_ema")
+    #     return log_dict
 
     def _validation_step(self, batch, batch_idx, suffix=""):
         x = self.get_input(batch, self.image_key)
@@ -190,6 +192,36 @@ class VQModel(pl.LightningModule):
                    prog_bar=True, logger=True, on_step=False, on_epoch=True, sync_dist=True)
         if version.parse(pl.__version__) >= version.parse('1.4.0'):
             del log_dict_ae[f"val{suffix}/rec_loss"]
+        self.log_dict(log_dict_ae)
+        self.log_dict(log_dict_disc)
+        return self.log_dict
+
+
+    def validation_step(self, batch, batch_idx):
+        log_dict = self._inference_step(batch, batch_idx)
+        return log_dict
+
+    def _inference_step(self, batch, batch_idx, suffix=""):
+        x = self.get_input(batch, self.image_key)
+        xrec, qloss, ind = self(x, return_pred_indices=True)
+        aeloss, log_dict_ae = self.loss(qloss, x, xrec, 0,
+                                        self.global_step,
+                                        last_layer=self.get_last_layer(),
+                                        split="val"+suffix,
+                                        predicted_indices=ind
+                                        )
+
+        discloss, log_dict_disc = self.loss(qloss, x, xrec, 1,
+                                            self.global_step,
+                                            last_layer=self.get_last_layer(),
+                                            split="val"+suffix,
+                                            predicted_indices=ind
+                                            )
+        rec_loss = log_dict_ae[f"val{suffix}/rec_loss"]
+        self.log(f"val{suffix}/rec_loss", rec_loss,
+                   prog_bar=True, logger=True, on_step=False, on_epoch=True, sync_dist=True)
+        self.log(f"val{suffix}/aeloss", aeloss,
+                   prog_bar=True, logger=True, on_step=False, on_epoch=True, sync_dist=True)
         self.log_dict(log_dict_ae)
         self.log_dict(log_dict_disc)
         return self.log_dict
@@ -378,6 +410,23 @@ class AutoencoderKL(pl.LightningModule):
             self.log_dict(log_dict_disc, prog_bar=False, logger=True, on_step=True, on_epoch=False)
             return discloss
 
+
+
+    def get_psnr(self, pred, gt):
+        return 10 * torch.log10(1 / torch.mean((pred - gt) ** 2)).detach().cpu().numpy()
+
+    def get_ssim(self, pred, gt):
+        ssims = []
+        for i in range(pred.shape[0]):
+            pred_i = pred[i, :, :, :].permute(1, 2, 0).detach().cpu().numpy()
+            gt_i = gt[i, :, :, :].permute(1, 2, 0).detach().cpu().numpy()
+            # set weights to more closely match MatLab implementation by Wang et al.
+            ssims.append(ssim(pred_i, gt_i, channel_axis=2, data_range=1.0,
+                              gaussian_weights=True, use_sample_covariance=False,
+                              K1=0.01, K2=0.03, sigma=1.5))
+
+        return sum(ssims) / len(ssims)
+
     def validation_step(self, batch, batch_idx):
         inputs = self.get_input(batch, 'LR_image')
         gts = self.get_input(batch, 'image')
@@ -387,20 +436,40 @@ class AutoencoderKL(pl.LightningModule):
 
         aeloss, log_dict_ae = self.loss(gts, reconstructions, posterior, 0, self.global_step,
                                         last_layer=self.get_last_layer(), split="val")
+        results = {}
+        results['lpips'] = log_dict_ae["val/rec_loss"]
 
-        discloss, log_dict_disc = self.loss(gts, reconstructions, posterior, 1, self.global_step,
-                                            last_layer=self.get_last_layer(), split="val")
+        out = torch.clip(reconstructions * 0.5 + 1, 0., 1.0)
+        gt = torch.clip(gts * 0.5 + 1, 0., 1.0)
 
-        # aeloss, log_dict_ae = self.loss(inputs, reconstructions, posterior, 0, self.global_step,
-        #                                 last_layer=self.get_last_layer(), split="val")
-        #
-        # discloss, log_dict_disc = self.loss(inputs, reconstructions, posterior, 1, self.global_step,
-        #                                     last_layer=self.get_last_layer(), split="val")
+        results['psnr'] = self.get_psnr(out, gt)
+        results['ssim'] = self.get_ssim(out, gt)
+        print(results)
+        return results
 
-        self.log("val/rec_loss", log_dict_ae["val/rec_loss"])
-        self.log_dict(log_dict_ae)
-        self.log_dict(log_dict_disc)
-        return self.log_dict
+    # def validation_step(self, batch, batch_idx):
+    #     inputs = self.get_input(batch, 'LR_image')
+    #     gts = self.get_input(batch, 'image')
+    #
+    #     # inputs = self.get_input(batch, self.image_key)
+    #     reconstructions, posterior = self(inputs)
+    #
+    #     aeloss, log_dict_ae = self.loss(gts, reconstructions, posterior, 0, self.global_step,
+    #                                     last_layer=self.get_last_layer(), split="val")
+    #
+    #     discloss, log_dict_disc = self.loss(gts, reconstructions, posterior, 1, self.global_step,
+    #                                         last_layer=self.get_last_layer(), split="val")
+    #
+    #     # aeloss, log_dict_ae = self.loss(inputs, reconstructions, posterior, 0, self.global_step,
+    #     #                                 last_layer=self.get_last_layer(), split="val")
+    #     #
+    #     # discloss, log_dict_disc = self.loss(inputs, reconstructions, posterior, 1, self.global_step,
+    #     #                                     last_layer=self.get_last_layer(), split="val")
+    #
+    #     self.log("val/rec_loss", log_dict_ae["val/rec_loss"])
+    #     self.log_dict(log_dict_ae)
+    #     self.log_dict(log_dict_disc)
+    #     return self.log_dict
 
     def configure_optimizers(self):
         lr = self.learning_rate

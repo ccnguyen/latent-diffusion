@@ -3,6 +3,7 @@ model:
   target: ldm.models.autoencoder.AutoencoderKL
   params:
     monitor: "val/rec_loss"
+    ckpt_path: /home/cindy/PycharmProjects/latent-diffusion/configs/first_stage_models/checkpoints/epoch=000092.ckpt
     embed_dim: 3
     lossconfig:
       target: ldm.modules.losses.LPIPSWithDiscriminator
@@ -27,7 +28,7 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 2
+    batch_size: 15
     wrap: True
     train:
       target: ldm.data.LOL.LOLTrain
