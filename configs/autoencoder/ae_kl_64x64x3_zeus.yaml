@@ -3,6 +3,7 @@ model:
   target: ldm.models.autoencoder.AutoencoderKL
   params:
     monitor: "val/rec_loss"
+    ckpt_path: /home/cindy/latent-diffusion/logs/2023-01-27T13-32-24_ae_kl_64x64x3_zeus/checkpoints/epoch=000309.ckpt
     embed_dim: 3
     lossconfig:
       target: ldm.modules.losses.LPIPSWithDiscriminator
@@ -27,7 +28,7 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 8
+    batch_size: 4
     wrap: True
     train:
       target: ldm.data.LOL.LOLTrain

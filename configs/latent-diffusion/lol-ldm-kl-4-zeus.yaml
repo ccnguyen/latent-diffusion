@@ -2,6 +2,7 @@ model:
   base_learning_rate: 2.0e-06
   target: ldm.models.diffusion.ddpm.LatentDiffusion
   params:
+    ckpt_path: /home/cindy/latent-diffusion/logs/2023-01-31T13-40-45_lol-ldm-kl-4-zeus/checkpoints/epoch=000577.ckpt
     linear_start: 0.0015
     linear_end: 0.0195
     num_timesteps_cond: 1

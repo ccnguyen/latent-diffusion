@@ -701,8 +701,8 @@ class LatentDiffusion(DDPM):
                 xc = x
 
             # skimage.io.imsave('test1.png',(xc[0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8))
-
             # breakpoint()
+
             if not self.cond_stage_trainable or force_c_encode:
                 if isinstance(xc, dict) or isinstance(xc, list):
                     # import pudb; pudb.set_trace()
@@ -894,26 +894,10 @@ class LatentDiffusion(DDPM):
             return self.first_stage_model.encode(x)
 
 
-    def inference_step(self, batch, **kwargs):
-        x, c = self.get_input(batch, self.first_stage_key)
-        loss = self.forward_inf(x, c)
-        return loss
-
     def shared_step(self, batch, **kwargs):
         x, c = self.get_input(batch, self.first_stage_key)
         loss = self(x, c)
         return loss
-
-    def forward_inf(self, x, c, *args, **kwargs):
-        t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()
-        if self.model.conditioning_key is not None:
-            assert c is not None
-            if self.cond_stage_trainable:
-                c = self.get_learned_conditioning(c)
-            if self.shorten_cond_schedule:  # TODO: drop this option
-                tc = self.cond_ids[t].to(self.device)
-                c = self.q_sample(x_start=c, t=tc, noise=torch.randn_like(c.float()))
-        return self.inference_eval(x, c, t, *args, **kwargs)
 
     def forward(self, x, c, *args, **kwargs):
         t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()
@@ -1057,42 +1041,39 @@ class LatentDiffusion(DDPM):
         return mean_flat(kl_prior) / np.log(2.0)
 
 
-    def inference_eval(self, x_start, cond, t, noise=None):
-        noise = default(noise, lambda: torch.randn_like(x_start))
-        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
-        model_output = self.apply_model(x_noisy, t, cond)
+    def inference_step(self, batch, N=8, n_row=4, sample=True, ddim_steps=200, ddim_eta=1., return_keys=None,
+                       quantize_denoised=True, plot_denoise_rows=False,
+                       plot_diffusion_rows=True, **kwargs):
+        use_ddim = ddim_steps is not None
+
+        log = dict()
+        z, c, x, xrec, xc = self.get_input(batch, self.first_stage_key,
+                                           return_first_stage_outputs=True,
+                                           force_c_encode=True,
+                                           return_original_cond=True,
+                                           bs=N)
+        N = min(x.shape[0], N)
+        log["inputs"] = x
+        log["reconstruction"] = xrec
+
+        with self.ema_scope("Plotting"):
+            samples, z_denoise_row = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,
+                                                     ddim_steps=ddim_steps, eta=ddim_eta)
+        x_samples = self.decode_first_stage(samples)
 
         results_dict = {}
-        prefix = 'train' if self.training else 'val'
-        target = x_start
         lpips_fn = lpips.LPIPS(net='alex').to('cuda:0').eval()
-        results_dict['lpips'] = lpips_fn(model_output, target)
+        out = x_samples
+        gt = x
+        results_dict['lpips'] = lpips_fn(out, gt)
 
-        out = model_output * 0.5 + 1.0
-        gt = target * 0.5 + 1.0
+        out = 0.5 * (out + 1.0)
+        gt = 0.5 * (gt + 1.0)
         results_dict['psnr'] = self.get_psnr(out, gt)
         results_dict['ssim'] = self.get_ssim(out, gt)
+        print(results_dict)
         return results_dict
 
-        # loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
-        # loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
-        #
-        # logvar_t = self.logvar.to(self.device)[t]
-        #
-        # loss = loss_simple / torch.exp(logvar_t) + logvar_t
-        # if self.learn_logvar:
-        #     loss_dict.update({f'{prefix}/loss_gamma': loss.mean()})
-        #     loss_dict.update({'logvar': self.logvar.data.mean()})
-        #
-        # loss = self.l_simple_weight * loss.mean()
-        #
-        # loss_vlb = self.get_loss(model_output, target, mean=False).mean(dim=(1, 2, 3))
-        # loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
-        # loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
-        # loss += (self.original_elbo_weight * loss_vlb)
-        # loss_dict.update({f'{prefix}/loss': loss})
-        #
-        # return loss, loss_dict
 
     def p_losses(self, x_start, cond, t, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))

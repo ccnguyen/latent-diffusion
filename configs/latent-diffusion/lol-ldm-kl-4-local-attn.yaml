@@ -2,7 +2,6 @@ model:
   base_learning_rate: 5.0e-05
   target: ldm.models.diffusion.ddpm.LatentDiffusion
   params:
-    ckpt_path: /home/cindy/PycharmProjects/latent-diffusion/configs/trained_models/2023-02-02T11-16-57_lol-ldm-kl-4-zeus/checkpoints/epoch=000577.ckpt
     linear_start: 0.0015
     linear_end: 0.0195
     num_timesteps_cond: 1
@@ -10,6 +9,7 @@ model:
     timesteps: 1000
     first_stage_key: image
     cond_stage_key: LR_image
+    concat_mode: False
     image_size: 64
     channels: 3
     monitor: val/loss_simple_ema
@@ -19,7 +19,7 @@ model:
       target: ldm.modules.diffusionmodules.openaimodel.UNetModel
       params:
         image_size: 64
-        in_channels: 6
+        in_channels: 3
         out_channels: 3
         model_channels: 224
         attention_resolutions: [ 1, 2, 4, 8]
@@ -36,7 +36,7 @@ model:
       params:
         embed_dim: 3
         monitor: "val/rec_loss"
-        ckpt_path: /home/cindy/PycharmProjects/latent-diffusion/configs/trained_models/2023-01-27T13-32-24_ae_kl_64x64x3_zeus/checkpoints/epoch=000309.ckpt
+        ckpt_path: /home/cindy/PycharmProjects/latent-diffusion/configs/trained_models/2023-01-27T13-32-24_ae_kl_64x64x3_zeus/checkpoints/last.ckpt
 #        n_embed: 8192
         ddconfig:
           double_z: True

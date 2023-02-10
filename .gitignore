@@ -8,4 +8,4 @@ outputs/*
 models/*
 data/*
 *.egg-info/
-configs/first_stage_models/*
+configs/trained_models/*
