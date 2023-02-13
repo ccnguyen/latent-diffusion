@@ -124,6 +124,7 @@ def get_parser(**parser_kwargs):
     parser.add_argument('--noise', type=float, default=0.05)
     parser.add_argument('--dataset', type=str, required=True)
     parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--ares', action='store_true')
     return parser
 
 
@@ -625,14 +626,25 @@ if __name__ == "__main__":
 
         trainer.logdir = logdir  ###
         config.data['params']['batch_size'] = opt.batch_size
+        if opt.ares:
+            in_root = f'/media/data4b/cindy/data/test/{opt.dataset}'
+            out_root = f'/media/data4b/cindy/data/did_inference'
+        else:
+            in_root = f'/home/cindy/PycharmProjects/data/ocr/test/{opt.dataset}'
+            out_root = f'/home/cindy/PycharmProjects/data/ocr/test_ldm'
 
         config.data['params']['train']['params']['noise'] = opt.noise
         config.data['params']['train']['params']['bright'] = opt.bright
-        config.data['params']['train']['params']['data_root'] = f'/home/cindy/PycharmProjects/data/ocr/test/{opt.dataset}'
+        config.data['params']['train']['params']['data_root'] = in_root
+        config.data['params']['train']['params']['out_root'] = out_root
+
 
         config.data['params']['validation']['params']['noise'] = opt.noise
         config.data['params']['validation']['params']['bright'] = opt.bright
-        config.data['params']['validation']['params']['data_root'] = f'/home/cindy/PycharmProjects/data/ocr/test/{opt.dataset}'
+        config.data['params']['validation']['params']['data_root'] = in_root
+        config.data['params']['validation']['params']['out_root'] = out_root
+
+
 
         # data
         data = instantiate_from_config(config.data)

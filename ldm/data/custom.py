@@ -22,14 +22,14 @@ def decrease_brightness(img, value=30):
 
 
 class CustomDataset(Dataset):
-    def __init__(self, data_root, size, bright, noise):
+    def __init__(self, data_root, out_root, size, bright, noise):
         self.bright = bright
         self.noise = noise
 
         self.dir = data_root
         dataset = data_root.split('/')[-1]
         self.dataset_name = dataset
-        self.output_dir = f'/home/cindy/PycharmProjects/data/ocr/test_ldm/{self.dataset_name}_png_v{self.bright}_n{self.noise}'
+        self.output_dir = f'{out_root}/{self.dataset_name}_png_v{self.bright}_n{self.noise}'
         os.makedirs(self.output_dir, exist_ok=True)
         self.files = [f for f in os.listdir(self.dir) if '.png' in f]
         self.labels = {
