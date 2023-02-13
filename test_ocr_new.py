@@ -4,14 +4,12 @@ import time
 import torch
 import torchvision
 import pytorch_lightning as pl
-import skimage.io
-import torch.nn.functional as F
-import cv2
 
 from packaging import version
 from omegaconf import OmegaConf
 from torch.utils.data import random_split, DataLoader, Dataset, Subset
 from functools import partial
+from PIL import Image
 
 from pytorch_lightning import seed_everything
 from pytorch_lightning.trainer import Trainer
@@ -127,20 +125,6 @@ def get_parser(**parser_kwargs):
     parser.add_argument('--dataset', type=str, required=True)
     parser.add_argument('--batch_size', type=int, default=64)
     return parser
-
-
-def decrease_brightness(img, value=30):
-    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-    h, s, v = cv2.split(hsv)
-
-    v = v / 1.0
-    v *= value
-    v = v.astype(np.uint8)
-    # v[v < value] = 0
-    # v[v >= value] -= value
-    final_hsv = cv2.merge((h,s,v))
-    img = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2RGB)
-    return img
 
 
 def nondefault_trainer_args(opt):
@@ -305,45 +289,134 @@ class SetupCallback(Callback):
                 except FileNotFoundError:
                     pass
 
-class CustomData(Dataset):
-    def __init__(self, dataset_name, bright, noise):
-        self.dataset_name = dataset_name
-        self.bright = bright
-        self.noise = noise
 
-        self.dir = f'/home/cindy/PycharmProjects/data/ocr/test/{self.dataset_name}'
-        self.files = [f for f in os.listdir(self.dir) if '.png' in f]
+class ImageLogger(Callback):
+    def __init__(self, batch_frequency, max_images, clamp=True, increase_log_steps=True,
+                 rescale=True, disabled=False, log_on_batch_idx=False, log_first_step=False,
+                 log_images_kwargs=None):
+        super().__init__()
+        self.rescale = rescale
+        self.batch_freq = batch_frequency
+        self.max_images = max_images
+        self.logger_log_images = {
+            pl.loggers.TestTubeLogger: self._testtube,
+        }
+        self.log_steps = [2 ** n for n in range(int(np.log2(self.batch_freq)) + 1)]
+        if not increase_log_steps:
+            self.log_steps = [self.batch_freq]
+        self.clamp = clamp
+        self.disabled = disabled
+        self.log_on_batch_idx = log_on_batch_idx
+        self.log_images_kwargs = log_images_kwargs if log_images_kwargs else {}
+        self.log_first_step = log_first_step
 
-    def __len__(self):
-        return len(self.files)
+    @rank_zero_only
+    def _testtube(self, pl_module, images, batch_idx, split):
+        for k in images:
+            grid = torchvision.utils.make_grid(images[k])
+            grid = (grid + 1.0) / 2.0  # -1,1 -> 0,1; c,h,w
 
-    def __getitem__(self, idx):
-        og_img = skimage.io.imread(f'{self.dir}/{self.files[idx]}')
-        img = decrease_brightness(og_img, value=self.bright) / 255.0
-        img = img + np.random.randn(*img.shape) * self.noise
-        img = np.clip(img, 0.0, 1.0).astype(np.float32)
-        img = torch.from_numpy(img).permute(2, 0, 1)[None, ...]
-        og_img = torch.from_numpy(og_img / 255.0).permute(2, 0, 1)[None,...]
+            tag = f"{split}/{k}"
+            pl_module.logger.experiment.add_image(
+                tag, grid,
+                global_step=pl_module.global_step)
 
-        og_h = img.shape[-2]
-        og_w = img.shape[-1]
-        og_img = F.interpolate(og_img, size=(256, 256), align_corners=False, mode='bilinear', antialias=True)
+    @rank_zero_only
+    def log_local(self, save_dir, split, images,
+                  global_step, current_epoch, batch_idx):
+        root = os.path.join(save_dir, "images", split)
+        for k in images:
+            grid = torchvision.utils.make_grid(images[k], nrow=4)
+            if self.rescale:
+                grid = (grid + 1.0) / 2.0  # -1,1 -> 0,1; c,h,w
+            grid = grid.transpose(0, 1).transpose(1, 2).squeeze(-1)
+            grid = grid.numpy()
+            grid = (grid * 255).astype(np.uint8)
+            filename = "{}_gs-{:06}_e-{:06}_b-{:06}.png".format(
+                k,
+                global_step,
+                current_epoch,
+                batch_idx)
+            path = os.path.join(root, filename)
+            os.makedirs(os.path.split(path)[0], exist_ok=True)
+            Image.fromarray(grid).save(path)
 
-        img = F.interpolate(img, size=(256, 256), align_corners=False, mode='bilinear', antialias=True)
+    def log_img(self, pl_module, batch, batch_idx, split="train"):
+        check_idx = batch_idx if self.log_on_batch_idx else pl_module.global_step
+        if (self.check_frequency(check_idx) and  # batch_idx % self.batch_freq == 0
+                hasattr(pl_module, "log_images") and
+                callable(pl_module.log_images) and
+                self.max_images > 0):
+            logger = type(pl_module.logger)
 
-        img = img[0].permute(1,2,0).numpy()
-        og_img = og_img[0].permute(1,2,0).numpy()
-        example = {}
-        example['image'] = og_img * 2 - 1
-        example['LR_image'] = img * 2 - 1
-        example['og_h'] = og_h
-        example['og_w'] = og_w
+            is_train = pl_module.training
+            if is_train:
+                pl_module.eval()
 
-        return example
+            with torch.no_grad():
+                images = pl_module.log_images(batch, split=split, **self.log_images_kwargs)
 
-        # if img.shape[-1] != img.shape[-2]:
-        #     max_len = max(img.shape[-1], img.shape[2])
-        #     img = F.interpolate(img, size=(max_len, max_len), mode='bilinear', antialias=True, align_corners=False)
+            for k in images:
+                N = min(images[k].shape[0], self.max_images)
+                images[k] = images[k][:N]
+                if isinstance(images[k], torch.Tensor):
+                    images[k] = images[k].detach().cpu()
+                    if self.clamp:
+                        images[k] = torch.clamp(images[k], -1., 1.)
+
+            self.log_local(pl_module.logger.save_dir, split, images,
+                           pl_module.global_step, pl_module.current_epoch, batch_idx)
+
+            logger_log_images = self.logger_log_images.get(logger, lambda *args, **kwargs: None)
+            logger_log_images(pl_module, images, pl_module.global_step, split)
+
+            if is_train:
+                pl_module.train()
+
+    def check_frequency(self, check_idx):
+        if ((check_idx % self.batch_freq) == 0 or (check_idx in self.log_steps)) and (
+                check_idx > 0 or self.log_first_step):
+            try:
+                self.log_steps.pop(0)
+            except IndexError as e:
+                print(e)
+                pass
+            return True
+        return False
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+        if not self.disabled and (pl_module.global_step > 0 or self.log_first_step):
+            self.log_img(pl_module, batch, batch_idx, split="train")
+
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+        if not self.disabled and pl_module.global_step > 0:
+            self.log_img(pl_module, batch, batch_idx, split="val")
+        if hasattr(pl_module, 'calibrate_grad_norm'):
+            if (pl_module.calibrate_grad_norm and batch_idx % 25 == 0) and batch_idx > 0:
+                self.log_gradients(trainer, pl_module, batch_idx=batch_idx)
+
+
+class CUDACallback(Callback):
+    # see https://github.com/SeanNaren/minGPT/blob/master/mingpt/callback.py
+    def on_train_epoch_start(self, trainer, pl_module):
+        # Reset the memory use counter
+        torch.cuda.reset_peak_memory_stats(trainer.root_gpu)
+        torch.cuda.synchronize(trainer.root_gpu)
+        self.start_time = time.time()
+
+    def on_train_epoch_end(self, trainer, pl_module, outputs):
+        torch.cuda.synchronize(trainer.root_gpu)
+        max_memory = torch.cuda.max_memory_allocated(trainer.root_gpu) / 2 ** 20
+        epoch_time = time.time() - self.start_time
+
+        try:
+            max_memory = trainer.training_type_plugin.reduce(max_memory)
+            epoch_time = trainer.training_type_plugin.reduce(epoch_time)
+
+            rank_zero_info(f"Average Epoch time: {epoch_time:.2f} seconds")
+            rank_zero_info(f"Average Peak memory {max_memory:.2f}MiB")
+        except AttributeError:
+            pass
 
 
 if __name__ == "__main__":
@@ -427,6 +500,7 @@ if __name__ == "__main__":
         # trainer and callbacks
         trainer_kwargs = dict()
 
+
         # default logger configs
         default_logger_cfgs = {
             "wandb": {
@@ -473,7 +547,7 @@ if __name__ == "__main__":
         if "modelcheckpoint" in lightning_config:
             modelckpt_cfg = lightning_config.modelcheckpoint
         else:
-            modelckpt_cfg = OmegaConf.create()
+            modelckpt_cfg =  OmegaConf.create()
         modelckpt_cfg = OmegaConf.merge(default_modelckpt_cfg, modelckpt_cfg)
         print(f"Merged modelckpt-cfg: \n{modelckpt_cfg}")
         if version.parse(pl.__version__) < version.parse('1.4.0'):
@@ -550,6 +624,15 @@ if __name__ == "__main__":
         trainer = Trainer.from_argparse_args(trainer_opt, **trainer_kwargs)
 
         trainer.logdir = logdir  ###
+        config.data['params']['batch_size'] = opt.batch_size
+
+        config.data['params']['train']['params']['noise'] = opt.noise
+        config.data['params']['train']['params']['bright'] = opt.bright
+        config.data['params']['train']['params']['data_root'] = f'/home/cindy/PycharmProjects/data/ocr/test/{opt.dataset}'
+
+        config.data['params']['validation']['params']['noise'] = opt.noise
+        config.data['params']['validation']['params']['bright'] = opt.bright
+        config.data['params']['validation']['params']['data_root'] = f'/home/cindy/PycharmProjects/data/ocr/test/{opt.dataset}'
 
         # data
         data = instantiate_from_config(config.data)
@@ -558,7 +641,7 @@ if __name__ == "__main__":
         print("#### Data #####")
         for k in data.datasets:
             print(f"{k}, {data.datasets[k].__class__.__name__}, {len(data.datasets[k])}")
-        #
+
         # configure learning rate
         bs, base_lr = config.data.params.batch_size, config.model.base_learning_rate
         if not cpu:
@@ -581,11 +664,37 @@ if __name__ == "__main__":
             print("++++ NOT USING LR SCALING ++++")
             print(f"Setting learning rate to {model.learning_rate:.2e}")
 
-        dataset = CustomData(dataset_name=opt.dataset, bright=opt.bright, noise=opt.noise)
-        dataloader = DataLoader(dataset, shuffle=False, num_workers=8, batch_size=opt.batch_size)
+        # allow checkpointing via USR1
+        def melk(*args, **kwargs):
+            # run all checkpoint hooks
+            if trainer.global_rank == 0:
+                print("Summoning checkpoint.")
+                ckpt_path = os.path.join(ckptdir, "last.ckpt")
+                trainer.save_checkpoint(ckpt_path)
 
-        for i, data in enumerate(dataloader):
-            out = trainer.validate(model, data)
+
+        def divein(*args, **kwargs):
+            if trainer.global_rank == 0:
+                import pudb;
+                pudb.set_trace()
+
+
+        import signal
+
+        signal.signal(signal.SIGUSR1, melk)
+        signal.signal(signal.SIGUSR2, divein)
+
+        # run
+        if opt.train:
+            try:
+                trainer.fit(model, data)
+            except Exception:
+                melk()
+                raise
+
+
+        if not opt.no_test and not trainer.interrupted:
+            trainer.validate(model, data)
             # trainer.test(model, data)
     except Exception:
         if opt.debug and trainer.global_rank == 0:
@@ -595,3 +704,13 @@ if __name__ == "__main__":
                 import pdb as debugger
             debugger.post_mortem()
         raise
+    finally:
+
+        # move newly created debug project to debug_runs
+        if opt.debug and not opt.resume and trainer.global_rank == 0:
+            dst, name = os.path.split(logdir)
+            dst = os.path.join(dst, "debug_runs", name)
+            os.makedirs(os.path.split(dst)[0], exist_ok=True)
+            os.rename(logdir, dst)
+        if trainer.global_rank == 0:
+            print(trainer.profiler.summary())

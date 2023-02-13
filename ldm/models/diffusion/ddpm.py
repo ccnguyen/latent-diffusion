@@ -11,6 +11,7 @@ import torch.nn as nn
 import lpips
 import matplotlib.pyplot as plt
 import skimage.io
+import torch.nn.functional as F
 from skimage.metrics import structural_similarity as ssim
 
 import numpy as np
@@ -367,6 +368,12 @@ class DDPM(pl.LightningModule):
     #         loss_dict_ema = {key + '_ema': loss_dict_ema[key] for key in loss_dict_ema}
     #     self.log_dict(loss_dict_no_ema, prog_bar=False, logger=True, on_step=False, on_epoch=True)
     #     self.log_dict(loss_dict_ema, prog_bar=False, logger=True, on_step=False, on_epoch=True)
+    # @torch.no_grad()
+    # def validation_step(self, batch):
+    #     # self.model = model
+    #     result_dict = self.inference_step(batch)
+    #     return result_dict
+    #     # self.log_dict(result_dict, prog_bar=False, logger=True, on_step=False, on_epoch=True)
 
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):
@@ -680,10 +687,12 @@ class LatentDiffusion(DDPM):
     @torch.no_grad()
     def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
                   cond_key=None, return_original_cond=False, bs=None):
+
         x = super().get_input(batch, k)
-        if bs is not None:
-            x = x[:bs]
+        # if bs is not None:
+        #     x = x[:bs]
         x = x.to(self.device)
+
         encoder_posterior = self.encode_first_stage(x)
         z = self.get_first_stage_encoding(encoder_posterior).detach()
 
@@ -700,9 +709,6 @@ class LatentDiffusion(DDPM):
             else:
                 xc = x
 
-            # skimage.io.imsave('test1.png',(xc[0].permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8))
-            # breakpoint()
-
             if not self.cond_stage_trainable or force_c_encode:
                 if isinstance(xc, dict) or isinstance(xc, list):
                     # import pudb; pudb.set_trace()
@@ -711,8 +717,8 @@ class LatentDiffusion(DDPM):
                     c = self.get_learned_conditioning(xc.to(self.device))
             else:
                 c = xc
-            if bs is not None:
-                c = c[:bs]
+            # if bs is not None:
+            #     c = c[:bs]
 
             if self.use_positional_encodings:
                 pos_x, pos_y = self.compute_latent_shifts(batch)
@@ -1046,12 +1052,18 @@ class LatentDiffusion(DDPM):
                        plot_diffusion_rows=True, **kwargs):
         use_ddim = ddim_steps is not None
 
+
+        og_h = batch['og_h']
+        og_w = batch['og_w']
+
         log = dict()
         z, c, x, xrec, xc = self.get_input(batch, self.first_stage_key,
                                            return_first_stage_outputs=True,
                                            force_c_encode=True,
                                            return_original_cond=True,
                                            bs=N)
+
+
         N = min(x.shape[0], N)
         log["inputs"] = x
         log["reconstruction"] = xrec
@@ -1071,7 +1083,16 @@ class LatentDiffusion(DDPM):
         gt = 0.5 * (gt + 1.0)
         results_dict['psnr'] = self.get_psnr(out, gt)
         results_dict['ssim'] = self.get_ssim(out, gt)
-        print(results_dict)
+
+        for i in range(len(og_h)):
+            h = og_h[i]
+            w = og_w[i]
+            out_img = F.interpolate(out[i][None, ...], size=(h, w), mode='bilinear', antialias=True, align_corners=False)
+
+            path_name = batch["gt_file_path_"][i].split('/')[-1]
+            skimage.io.imsave(f'{batch["dir"][i]}/{path_name}', (out_img[0].permute(1,2,0).detach().cpu().numpy() * 255).astype(np.uint8))
+
+
         return results_dict
 
 

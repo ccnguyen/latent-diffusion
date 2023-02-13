@@ -31,6 +31,8 @@ class LOLBase(Dataset):
         self.low_labels = {
             "relative_file_path_": [l for l in self.gt_image_paths]
         }
+        self.out_dir = '/home/cindy/PycharmProjects/latent-diffusion/results/LOL'
+        os.makedirs(self.out_dir, exist_ok=True)
 
         self.size = size
         self.interpolation = {"linear": PIL.Image.LINEAR,
@@ -83,6 +85,9 @@ class LOLBase(Dataset):
         # example["LR_image"] = (img[:, :, 3:6] / 255.0).astype(np.float32)
         example["image"] = (img[:, :, 0:3] / 127.5 - 1.0).astype(np.float32)
         example["LR_image"] = (img[:, :, 3:6] / 127.5 - 1.0).astype(np.float32)
+        example['og_h'] = 256
+        example['og_w'] = 256
+        example['dir'] = self.out_dir
         return example
 
 
