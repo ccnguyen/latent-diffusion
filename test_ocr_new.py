@@ -432,6 +432,9 @@ if __name__ == "__main__":
     parser = Trainer.add_argparse_args(parser)
 
     opt, unknown = parser.parse_known_args()
+
+    print(f'INFERENCE ON {opt.dataset}, bright {opt.bright}, noise {opt.noise}')
+
     if opt.name and opt.resume:
         raise ValueError(
             "-n/--name and -r/--resume cannot be specified both."
@@ -628,10 +631,14 @@ if __name__ == "__main__":
         config.data['params']['batch_size'] = opt.batch_size
         if opt.ares:
             in_root = f'/media/data4b/cindy/data/test/{opt.dataset}'
-            out_root = f'/media/data4b/cindy/data/did_inference'
+            out_root = f'/media/data4b/cindy/data/ldm_inference'
         else:
             in_root = f'/home/cindy/PycharmProjects/data/ocr/test/{opt.dataset}'
             out_root = f'/home/cindy/PycharmProjects/data/ocr/test_ldm'
+
+
+        print(f'IN: {in_root}')
+        print(f'OUT: {out_root}')
 
         config.data['params']['train']['params']['noise'] = opt.noise
         config.data['params']['train']['params']['bright'] = opt.bright

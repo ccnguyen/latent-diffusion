@@ -18,6 +18,10 @@ dependencies:
     - pytorch-lightning==1.4.2
     - omegaconf==2.1.1
     - test-tube>=0.7.5
+    - lpips
+    - matplotlib
+    - seaborn
+    - pandas
     - streamlit>=0.73.1
     - einops==0.3.0
     - torch-fidelity==0.3.0

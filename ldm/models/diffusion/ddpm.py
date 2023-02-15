@@ -377,7 +377,9 @@ class DDPM(pl.LightningModule):
 
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):
-        result_dict = self.inference_step(batch)
+        result_dict = self.inference_step_ocr(batch, N=len(batch['og_h']))
+        # result_dict = self.inference_step(batch, N=len(batch['og_h']))
+
         self.log_dict(result_dict, prog_bar=False, logger=True, on_step=False, on_epoch=True)
 
     def get_psnr(self, pred, gt):
@@ -1047,7 +1049,49 @@ class LatentDiffusion(DDPM):
         return mean_flat(kl_prior) / np.log(2.0)
 
 
+
     def inference_step(self, batch, N=8, n_row=4, sample=True, ddim_steps=200, ddim_eta=1., return_keys=None,
+                       quantize_denoised=True, plot_denoise_rows=False,
+                       plot_diffusion_rows=True, **kwargs):
+        use_ddim = ddim_steps is not None
+
+        log = dict()
+        z, c, x, xrec, xc = self.get_input(batch, self.first_stage_key,
+                                           return_first_stage_outputs=True,
+                                           force_c_encode=True,
+                                           return_original_cond=True,
+                                           bs=N)
+
+
+        N = min(x.shape[0], N)
+        log["inputs"] = x
+        log["reconstruction"] = xrec
+
+        with self.ema_scope("Plotting"):
+            samples, z_denoise_row = self.sample_log(cond=c, batch_size=N, ddim=use_ddim,
+                                                     ddim_steps=ddim_steps, eta=ddim_eta)
+        x_samples = self.decode_first_stage(samples)
+
+        results_dict = {}
+        lpips_fn = lpips.LPIPS(net='alex').to('cuda:0').eval()
+        out = x_samples
+        gt = x
+        results_dict['lpips'] = lpips_fn(out, gt)
+
+        out = 0.5 * (out + 1.0)
+        gt = 0.5 * (gt + 1.0)
+        results_dict['psnr'] = self.get_psnr(out, gt)
+        results_dict['ssim'] = self.get_ssim(out, gt)
+
+        out = torch.clamp(out, 0, 1.0)
+        for i in range(x.shape[0]):
+            path_name = batch["gt_file_path_"][i].split('/')[-1]
+            print(f'/home/cindy/PycharmProjects/latent-diffusion/results/LOL/{path_name}')
+            skimage.io.imsave(f'/home/cindy/PycharmProjects/latent-diffusion/results/LOL/{path_name}', (out[i].permute(1,2,0).detach().cpu().numpy() * 255).astype(np.uint8))
+
+        return results_dict
+
+    def inference_step_ocr(self, batch, N=8, n_row=4, sample=True, ddim_steps=200, ddim_eta=1., return_keys=None,
                        quantize_denoised=True, plot_denoise_rows=False,
                        plot_diffusion_rows=True, **kwargs):
         use_ddim = ddim_steps is not None

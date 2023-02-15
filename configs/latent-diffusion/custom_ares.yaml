@@ -2,7 +2,7 @@ model:
   base_learning_rate: 5.0e-05
   target: ldm.models.diffusion.ddpm.LatentDiffusion
   params:
-    ckpt_path: /home/cindy/PycharmProjects/latent-diffusion/configs/trained_models/2023-02-02T11-16-57_lol-ldm-kl-4-zeus/checkpoints/epoch=000577.ckpt
+    ckpt_path: /home/cindy/latent-diffusion/configs/trained_models/2023-02-02T11-16-57_lol-ldm-kl-4-zeus/checkpoints/epoch=000577.ckpt
     linear_start: 0.0015
     linear_end: 0.0195
     num_timesteps_cond: 1
@@ -36,7 +36,7 @@ model:
       params:
         embed_dim: 3
         monitor: "val/rec_loss"
-        ckpt_path: /home/cindy/PycharmProjects/latent-diffusion/configs/trained_models/2023-01-27T13-32-24_ae_kl_64x64x3_zeus/checkpoints/epoch=000309.ckpt
+        ckpt_path: /home/cindy/latent-diffusion/configs/trained_models/2023-01-27T13-32-24_ae_kl_64x64x3_zeus/checkpoints/epoch=000309.ckpt
 #        n_embed: 8192
         ddconfig:
           double_z: True
@@ -65,15 +65,21 @@ data:
     num_workers: 1
     wrap: False
     train:
-      target: ldm.data.LOL.LOLTrain
+      target: ldm.data.custom.CustomDataset
       params:
         size: 256
-        data_root: /home/cindy/PycharmProjects/data/LOL/our485
+        data_root: /home/cindy/PycharmProjects/data/ocr/test
+        out_root: /home/cindy/PycharmProjects/data/ocr/test_ldm
+        bright: 0.5
+        noise: 0.03
     validation:
-      target: ldm.data.LOL.LOLValidation
+      target: ldm.data.custom.CustomDataset
       params:
         size: 256
-        data_root: /home/cindy/PycharmProjects/data/LOL/eval15_256
+        data_root: /home/cindy/PycharmProjects/data/ocr/test
+        out_root: /home/cindy/PycharmProjects/data/ocr/test_ldm
+        bright: 0.5
+        noise: 0.03
 
 
 lightning:

@@ -39,6 +39,7 @@ and activated with:
 ```
 conda env create -f environment.yaml
 conda activate ldm
+pip install --no-cache pytorch-lightning omegaconf matplotlib seaborn pandas scikit-image opencv-python einops lpips taming-transformers-rom1504
 ```
 
 # Pretrained Models
