@@ -9,6 +9,7 @@ https://github.com/CompVis/taming-transformers
 import torch
 import torch.nn as nn
 import lpips
+import os
 import matplotlib.pyplot as plt
 import skimage.io
 import torch.nn.functional as F
@@ -379,6 +380,9 @@ class DDPM(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         result_dict = self.inference_step_ocr(batch, N=len(batch['og_h']))
         # result_dict = self.inference_step(batch, N=len(batch['og_h']))
+        #
+        # for i in range(10):
+        #     result_dict = self.inference_step(batch, N=len(batch['og_h']), idx=i)
 
         self.log_dict(result_dict, prog_bar=False, logger=True, on_step=False, on_epoch=True)
 
@@ -1052,7 +1056,7 @@ class LatentDiffusion(DDPM):
 
     def inference_step(self, batch, N=8, n_row=4, sample=True, ddim_steps=200, ddim_eta=1., return_keys=None,
                        quantize_denoised=True, plot_denoise_rows=False,
-                       plot_diffusion_rows=True, **kwargs):
+                       plot_diffusion_rows=True, idx=0, **kwargs):
         use_ddim = ddim_steps is not None
 
         log = dict()
@@ -1086,8 +1090,12 @@ class LatentDiffusion(DDPM):
         out = torch.clamp(out, 0, 1.0)
         for i in range(x.shape[0]):
             path_name = batch["gt_file_path_"][i].split('/')[-1]
+            path_name = path_name.split('.')[0]
             print(f'/home/cindy/PycharmProjects/latent-diffusion/results/LOL/{path_name}')
-            skimage.io.imsave(f'/home/cindy/PycharmProjects/latent-diffusion/results/LOL/{path_name}', (out[i].permute(1,2,0).detach().cpu().numpy() * 255).astype(np.uint8))
+            os.makedirs(f'/home/cindy/PycharmProjects/latent-diffusion/results/LOL/{path_name}', exist_ok=True)
+            skimage.io.imsave(f'/home/cindy/PycharmProjects/latent-diffusion/results/LOL/{path_name}/{idx}.png', (out[i].permute(1,2,0).detach().cpu().numpy() * 255).astype(np.uint8))
+
+            # skimage.io.imsave(f'/home/cindy/PycharmProjects/latent-diffusion/results/LOL/{path_name}', (out[i].permute(1,2,0).detach().cpu().numpy() * 255).astype(np.uint8))
 
         return results_dict
 

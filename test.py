@@ -629,6 +629,7 @@ if __name__ == "__main__":
         for k in data.datasets:
             print(f"{k}, {data.datasets[k].__class__.__name__}, {len(data.datasets[k])}")
 
+        start_time = time.time()
         # configure learning rate
         bs, base_lr = config.data.params.batch_size, config.model.base_learning_rate
         if not cpu:
@@ -681,8 +682,24 @@ if __name__ == "__main__":
 
 
         if not opt.no_test and not trainer.interrupted:
-            trainer.validate(model, data)
+            # total_params = 0
+            # for parameter in model.parameters():
+            #     nums = list(parameter.shape)
+            #     total = 1
+            #     for n in nums:
+            #         total *= n
+            #     total_params += total
+            #     # print(parameter.shape)
+            # print(total_params)
+
+            # sys.exit()
+
+            trainer.validate(model, data) #todo: go to ldm > models > diffusion > ddpm and change val step for diff inferences
             # trainer.test(model, data)
+
+        print((time.time() - start_time) / 15)
+
+
     except Exception:
         if opt.debug and trainer.global_rank == 0:
             try:
